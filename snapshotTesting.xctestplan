@@ -1,0 +1,37 @@
+{
+  "configurations" : [
+    {
+      "id" : "F090C943-0151-4C72-AEC1-5B5BBFD21480",
+      "name" : "Configuration 1",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "commandLineArgumentEntries" : [
+      {
+        "argument" : "-AppleLanguages (ja)"
+      },
+      {
+        "argument" : "isUnitTestMode"
+      }
+    ],
+    "targetForVariableExpansion" : {
+      "containerPath" : "container:StarterKitVRT.xcodeproj",
+      "identifier" : "B2B2B2B20000000000000004",
+      "name" : "StarterKitVRTHost"
+    },
+    "testTimeoutsEnabled" : true
+  },
+  "testTargets" : [
+    {
+      "target" : {
+        "containerPath" : "container:StarterKitVRT.xcodeproj",
+        "identifier" : "B2B2B2B2000000000000000B",
+        "name" : "StarterKitSnapshotTests"
+      }
+    }
+  ],
+  "version" : 1
+}

@@ -1,0 +1,156 @@
+# This file contains the fastlane.tools configuration
+# You can find the documentation at https://docs.fastlane.tools
+#
+# For a list of all available actions, check out
+#
+#     https://docs.fastlane.tools/actions
+#
+# For a list of all available plugins, check out
+#
+#     https://docs.fastlane.tools/plugins/available-plugins
+#
+
+# Uncomment the line if you want fastlane to automatically update itself
+# update_fastlane
+
+default_platform(:ios)
+
+platform :ios do
+
+  before_all do
+    setup_ci if ENV['CI']
+    
+    # Xcode26でビルドのアップロードを行うときに、新しいバージョンのaltoolだと、エラーがあってもエラーを吐かずハングしてしまうため、古いバージョンを使うようにする
+    # https://github.com/fastlane/fastlane/issues/29725
+    ENV["DELIVER_ALTOOL_ADDITIONAL_UPLOAD_PARAMETERS"] = "--use-old-altool"
+  end
+
+  desc "ipaを生成"
+  lane :make_ipa do |options|
+    match(
+      api_key: generate_api_key,
+      type: "appstore",
+      readonly: true
+    )
+
+    gym(
+      project: "StarterKit.xcodeproj",
+      scheme: "production",
+      output_directory: "Build/app",
+      cloned_source_packages_path: "SourcePackages",
+      export_method: "app-store",
+      xcargs: "-skipPackagePluginValidation"
+    )
+  end
+
+  desc "指定されたipaでTestFlight配信を行う"
+  lane :upload_testFlight do |options|
+    # ipa生成
+    make_ipa
+
+    # ipaをTestFlight用にアップロード
+    api_key = generate_api_key
+    upload_to_testflight(
+      ipa: "Build/app/StarterKit.ipa",
+      api_key: api_key
+    )
+  end
+
+  # 通常のリリースはXcode Cloudの「Upload For AppStore」workflow（release/*ブランチへのpushで起動）で行う（docs/adr/0007-release-pipeline.md）。
+  # このレーンはローカルから手動でビルド・アップロードする場合の代替手段として残す。
+  # タグ作成もGitHub Actions側（PRマージ時）で行うようになったため、ここでは打たない。
+  desc "指定されたipaでApp Storeリリースを行う（ローカル手動実行用のフォールバック）"
+  lane :release do |options|
+    # ipa生成
+    make_ipa(options)
+
+    # ipaをリリース用にアップロード
+    api_key = generate_api_key(options)
+    upload_to_app_store(
+      ipa: "Build/app/StarterKit.ipa",
+      api_key: api_key
+    )
+  end
+
+  # app_versionにASC未作成のバージョンを渡すとensure_version!が新規作成し、
+  # 既に同じバージョンが存在する場合は何もしない（差分が無ければ変更扱いにならない）。
+  # skip_app_version_update: trueのままだとこの自動作成が働かず、編集可能なバージョンが
+  # 無い場合に "Cannot find edit app store version" で失敗するため、常にapp_versionを渡す。
+  desc "App Store Connectへメタデータを同期（ビルドはアップロードしない、対象バージョンが無ければ新規作成する）"
+  lane :sync_metadata do |options|
+    api_key = generate_api_key
+    deliver(
+      api_key: api_key,
+      app_version: options[:app_version],
+      skip_binary_upload: true,
+      skip_app_version_update: false
+    )
+  end
+
+  desc "開発用のプロビジョニングプロファイルを更新"
+  lane :update_profile do |options|
+    api_key = generate_api_key
+    match(
+      api_key: api_key,
+      app_identifier: "com.example.starterkit.dev",
+      type: "development",
+      force: true,
+      force_for_new_devices: true
+    )
+  end
+
+  desc "本番用のプロビジョニングプロファイルを更新"
+  lane :update_profile_prod do |options|
+    api_key = generate_api_key
+    match(
+      api_key: api_key,
+      app_identifier: "com.example.starterkit",
+      type: "appstore",
+      force: true,
+      force_for_new_devices: true
+    )
+  end
+
+  desc "開発用のプロビジョニングプロファイルをインストール"
+  lane :install_dev_profile do |options|
+    api_key = generate_api_key
+    match(
+      api_key: api_key,
+      app_identifier: "com.example.starterkit.dev",
+      type: "development",
+      readonly: true
+    )
+  end
+
+  desc "本番用のプロビジョニングプロファイルをインストール"
+  lane :install_prod_profile do |options|
+    api_key = generate_api_key
+    match(
+      api_key: api_key,
+      app_identifier: "com.example.starterkit",
+      type: "appstore",
+      readonly: true
+    )
+  end
+
+  desc "全ての証明書・プロビジョニングプロファイルを削除"
+  lane :nuke_certificates do
+    api_key = generate_api_key
+    ["development", "appstore"].each do |type|
+      match_nuke(
+        api_key: api_key,
+        type: type,
+        skip_confirmation: true
+      )
+    end
+  end
+
+  private_lane :generate_api_key do
+    app_store_connect_api_key(
+      key_id: ENV['ASC_KEY_ID'],
+      issuer_id: ENV['ASC_ISSUER_ID'],
+      key_filepath: ENV['ASC_API_KEY_PATH'],
+      in_house: false
+    )
+  end
+end

@@ -1,0 +1,135 @@
+name: Create Release PR
+
+# docs/adr/0007-release-pipeline.md: リリースパイプラインの起点。手動実行でバージョン番号を指定し、
+# MARKETING_VERSIONを更新したブランチとPRを作成する。
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "リリースするバージョン番号（例: 1.1.0）"
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  # release-snapshot-diff.yml をworkflow_dispatchで起動するため
+  actions: write
+
+jobs:
+  create-release-pr:
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          ref: main
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Validate version format
+        run: |
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version は X.Y.Z 形式で指定してください（入力: $VERSION）"
+            exit 1
+          fi
+
+      # 同名ブランチが残っていると最後のpushがnon-fast-forwardで拒否される。
+      # PRが紐づいている可能性があるためforce pushで上書きはせず、ここで止めて削除を促す。
+      - name: Ensure release branch does not exist
+        run: |
+          if git ls-remote --exit-code --heads origin "release/v${VERSION}" > /dev/null; then
+            echo "::error::release/v${VERSION} がリモートに既に存在します。不要であれば git push origin --delete release/v${VERSION} で削除してから再実行してください"
+            exit 1
+          fi
+
+      - name: Create release branch
+        run: git checkout -b "release/v${VERSION}"
+
+      # agvtool new-marketing-versionと同じく全ターゲットのMARKETING_VERSIONを揃える。
+      # Xcodeに依存しないのでmacOSランナーを使わずに済む。
+      - name: Bump MARKETING_VERSION
+        run: sed -i -E "s/MARKETING_VERSION = [^;]+;/MARKETING_VERSION = ${VERSION};/" StarterKit.xcodeproj/project.pbxproj
+
+      - name: Configure git
+        run: |
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+
+      - name: Commit version bump
+        run: |
+          git add StarterKit.xcodeproj/project.pbxproj
+          git commit --allow-empty -m "chore: リリースバージョンをv${VERSION}に更新"
+
+      # 前回リリースタグ以降にmainへマージされたPRを一覧化する。
+      # PRタイトルにバッククォートや$等が含まれても安全なよう、ここではファイルへの
+      # 書き出しのみ行い、シェルの再展開が起きるコマンド置換には使わない。
+      - name: Collect merged PRs since last release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          LAST_TAG=$(git tag -l 'v*' --sort=-v:refname | head -n 1)
+          if [ -n "$LAST_TAG" ]; then
+            SINCE_EPOCH=$(git log -1 --format=%ct "$LAST_TAG")
+          else
+            SINCE_EPOCH=0
+          fi
+
+          gh pr list --base main --state merged --json number,title,url,mergedAt --limit 200 \
+            | jq -r --argjson since "$SINCE_EPOCH" '
+                [.[] | select((.mergedAt | fromdateiso8601) > $since)]
+                | sort_by(.mergedAt)
+                | if length == 0 then ["（前回リリースからの変更なし）"] else map("- #\(.number) \(.title) (\(.url))") end
+                | .[]
+              ' > pr_list.txt
+
+      - name: Build PR body
+        run: |
+          {
+            echo "## リリースv${VERSION}"
+            echo ""
+            echo "### 前回リリースとの差分PR一覧"
+            echo ""
+            cat pr_list.txt
+            echo ""
+            echo "### リリース前チェックリスト"
+            echo ""
+            echo "- [ ] 動作確認が済んでいること"
+            echo "- [ ] スクリーンショットの更新が必要な場合は更新していること"
+            echo "- [ ] リリースノートの更新が済んでいること（\`fastlane/metadata/ja/release_notes.txt\`）"
+            echo "- [ ] 前バージョンとのスナップショットの比較で意図しない差分がないこと"
+            echo ""
+            echo "---"
+            echo ""
+            echo "このPRへのpushの度に、Xcode Cloudの「Upload Release Candidate TestFlight」workflowが"
+            echo "外部TestFlightにビルドを配信し、「Upload For AppStore」workflowがApp Store Connectへビルドを"
+            echo "アップロードします。マージするとタグ作成・GitHub Release publishだけが走ります（docs/adr/0007-release-pipeline.md）。"
+            echo ""
+            echo "\`fastlane/metadata/\`・\`fastlane/screenshots/\` の変更をこのブランチへpushすると、"
+            echo "Sync MetadataワークフローがApp Store Connectへメタデータを同期します（docs/adr/0007-release-pipeline.md）。"
+          } > pr_body.md
+
+      # PR本文の生成で失敗してもリモートにブランチだけが残らないよう、pushはPR作成の直前に行う。
+      # 残ると次回実行時にnon-fast-forwardで拒否され、手動でブランチを消すまで再実行できなくなる。
+      - name: Push release branch
+        run: git push origin "release/v${VERSION}"
+
+      - name: Create pull request
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr create \
+            --base main \
+            --head "release/v${VERSION}" \
+            --title "Release v${VERSION}" \
+            --body-file pr_body.md
+
+      # GITHUB_TOKENで作ったPRでは pull_request イベントが発火しないため、
+      # 前バージョンとのスナップショット比較（docs/adr/0007-release-pipeline.md）の1回目はここから起動する
+      - name: Trigger snapshot diff
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh workflow run release-snapshot-diff.yml \
+            --ref "release/v${VERSION}" \
+            -f release_branch="release/v${VERSION}"

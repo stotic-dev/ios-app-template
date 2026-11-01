@@ -1,0 +1,40 @@
+{
+  "configurations" : [
+    {
+      "id" : "6C1E2A4B-3D5F-4A7B-9C8D-1E2F3A4B5C6D",
+      "name" : "Test Scheme Action",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "commandLineArgumentEntries" : [
+      {
+        "argument" : "isUnitTestMode"
+      }
+    ],
+    "targetForVariableExpansion" : {
+      "containerPath" : "container:StarterKit.xcodeproj",
+      "identifier" : "A1A1A1A10000000000000004",
+      "name" : "StarterKit"
+    }
+  },
+  "testTargets" : [
+    {
+      "target" : {
+        "containerPath" : "container:LocalPackage",
+        "identifier" : "StarterModelTests",
+        "name" : "StarterModelTests"
+      }
+    },
+    {
+      "target" : {
+        "containerPath" : "container:LocalPackage",
+        "identifier" : "StarterDomainTests",
+        "name" : "StarterDomainTests"
+      }
+    }
+  ],
+  "version" : 1
+}

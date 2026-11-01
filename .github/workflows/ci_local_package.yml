@@ -1,0 +1,104 @@
+name: local_package_test
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "LocalPackage/**"
+  pull_request:
+    branches: ["**"]
+    paths:
+      - "LocalPackage/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  test:
+    runs-on: macos-26
+    timeout-minutes: 20
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.4.1.app
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          # PRでは変更に関係するテストターゲットだけ流すので、ベースブランチとの分岐点まで履歴を取る
+          fetch-depth: 0
+
+      - name: Select Xcode version
+        run: sudo xcode-select -s '${{ env.DEVELOPER_DIR }}/Contents/Developer'
+
+      - name: Show Swift version
+        run: swift --version
+
+      # 変更されたターゲットと、それに依存するターゲットのテストだけを流す（ADR-0004）。
+      # mainへのpushと手動実行では全テストを流す
+      - name: Detect affected test targets
+        id: affected
+        if: github.event_name == 'pull_request'
+        run: |
+          python3 scripts/affected-modules.py summary --base "origin/${{ github.base_ref }}"
+          echo "filter=$(python3 scripts/affected-modules.py test-filter --base "origin/${{ github.base_ref }}")" >> "$GITHUB_OUTPUT"
+
+      # workspace-state.json が無いと、SwiftPMは復元したcheckoutsを使わず依存の解決とチェックアウトをやり直す。
+      # xcframeworkなどのバイナリ依存は artifacts に置かれるので、これもキャッシュしないと毎回ダウンロードされる。
+      # workspace-state.json は絶対パスを含むが、ランナーのチェックアウト先は毎回同じなので問題ない。
+      # キャッシュの中身を変えたらキーの v<N> を上げる（同じキーにヒットすると新しい中身が保存されないため）
+      - name: Cache LocalPackage
+        uses: actions/cache@v4
+        with:
+          path: |
+            LocalPackage/.build/checkouts
+            LocalPackage/.build/repositories
+            LocalPackage/.build/artifacts
+            LocalPackage/.build/workspace-state.json
+          key: local-package-v2-${{ runner.os }}-${{ hashFiles('LocalPackage/Package.resolved') }}
+          restore-keys: |
+            local-package-v2-${{ runner.os }}-
+
+      # Prefireの生成コードはここではビルドされないため、#Preview のアクセス修飾子ミスは
+      # Xcode Cloud の VRT まで検出できない。静的検査で先に落とす。
+      - name: Check Prefire previews
+        run: make check-previews
+
+      - name: Run affected tests with coverage
+        if: github.event_name == 'pull_request' && steps.affected.outputs.filter != ''
+        run: make test-affected BASE="origin/${{ github.base_ref }}" COVERAGE=1
+
+      - name: Run all tests with coverage
+        if: github.event_name != 'pull_request'
+        run: make test-packages
+
+      - name: Setup Node.js
+        if: github.event_name == 'pull_request' && github.actor != 'dependabot[bot]' && steps.affected.outputs.filter != ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install Danger
+        if: github.event_name == 'pull_request' && github.actor != 'dependabot[bot]' && steps.affected.outputs.filter != ''
+        run: npm install -g danger
+
+      # PRのキャッシュは他のPRから読めないため、mainへのpushでもビルドしてmainにキャッシュを残す。
+      # これが無いと、どのPRも初回は必ずキャッシュが無い状態でビルドすることになる
+      - name: Cache DangerTools build
+        if: github.actor != 'dependabot[bot]'
+        uses: actions/cache@v4
+        with:
+          path: DangerTools/.build
+          key: danger-tools-${{ runner.os }}-${{ hashFiles('DangerTools/Package.resolved') }}
+          restore-keys: |
+            danger-tools-${{ runner.os }}-
+
+      - name: Build DangerTools
+        if: github.actor != 'dependabot[bot]'
+        run: swift build --package-path DangerTools --scratch-path DangerTools/.build
+
+      - name: Run Danger (Coverage)
+        if: github.event_name == 'pull_request' && github.actor != 'dependabot[bot]' && steps.affected.outputs.filter != ''
+        working-directory: DangerTools
+        run: swift run danger-swift ci --dangerfile DangerfileCoverage.swift --cwd .. --id "danger-coverage"
+        env:
+          GITHUB_TOKEN: ${{ secrets.DANGER_GITHUB_API_TOKEN }}

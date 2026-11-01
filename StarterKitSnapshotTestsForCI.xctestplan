@@ -1,0 +1,51 @@
+{
+  "configurations" : [
+    {
+      "id" : "089CBDC1-94A2-424B-999D-B47631B502B4",
+      "name" : "Configuration 1",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "commandLineArgumentEntries" : [
+      {
+        "argument" : "-AppleLanguages (ja)"
+      },
+      {
+        "argument" : "isUnitTestMode"
+      }
+    ],
+    "diagnosticCollectionPolicy" : "Never",
+    "environmentVariableEntries" : [
+      {
+        "key" : "CI_XCODE_CLOUD",
+        "value" : "$(CI_XCODE_CLOUD)"
+      },
+      {
+        "key" : "CI_PRIMARY_REPOSITORY_PATH",
+        "value" : "$(CI_PRIMARY_REPOSITORY_PATH)"
+      },
+      {
+        "key" : "SNAPSHOT_TESTING_RECORD",
+        "value" : "$(SNAPSHOT_TESTING_RECORD)"
+      }
+    ],
+    "targetForVariableExpansion" : {
+      "containerPath" : "container:StarterKitVRT.xcodeproj",
+      "identifier" : "B2B2B2B20000000000000004",
+      "name" : "StarterKitVRTHost"
+    }
+  },
+  "testTargets" : [
+    {
+      "target" : {
+        "containerPath" : "container:StarterKitVRT.xcodeproj",
+        "identifier" : "B2B2B2B2000000000000000B",
+        "name" : "StarterKitSnapshotTests"
+      }
+    }
+  ],
+  "version" : 1
+}

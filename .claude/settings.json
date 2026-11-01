@@ -1,0 +1,68 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(scripts/xcode-cloud.sh *)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(**/.env)",
+      "Read(**/.env.*)",
+      "Read(./private_keys/**)",
+      "Read(**/private_keys/**)",
+      "Read(**/service-account*.json)",
+      "Read(**/google-services.json)",
+      "Read(StarterKit/Resources/Secret.xcconfig)",
+      "Read(StarterKit/Resources/Secret_dev.xcconfig)",
+      "Edit(./.env)",
+      "Edit(./.env.*)",
+      "Edit(**/.env)",
+      "Edit(**/.env.*)",
+      "Edit(./private_keys/**)",
+      "Edit(**/private_keys/**)",
+      "Edit(**/service-account*.json)",
+      "Edit(**/google-services.json)",
+      "Edit(StarterKit/Resources/Secret.xcconfig)",
+      "Edit(StarterKit/Resources/Secret_dev.xcconfig)"
+    ]
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PROJECT_DIR:-.}/scripts/claude-verify-swift.sh\"",
+            "asyncRewake": true,
+            "timeout": 120,
+            "statusMessage": "Swift検証中（#Previewの静的チェック）"
+          }
+        ]
+      }
+    ]
+  },
+  "sandbox": {
+    "excludedCommands": [
+      "scripts/xcode-cloud.sh *"
+    ],
+    "network": {
+      "allowedDomains": [
+        "github.com",
+        "api.github.com",
+        "raw.githubusercontent.com",
+        "objects.githubusercontent.com",
+        "codeload.github.com",
+        "code.claude.com",
+        "docs.claude.com"
+      ]
+    },
+    "filesystem": {
+      "allowWrite": [
+        "~/Library/org.swift.swiftpm",
+        "~/Library/Caches/org.swift.swiftpm",
+        "~/Library/Caches/SwiftLint",
+        "~/Library/Developer/Xcode/DerivedData"
+      ]
+    }
+  }
+}

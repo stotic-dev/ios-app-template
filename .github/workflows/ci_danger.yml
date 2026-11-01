@@ -1,0 +1,104 @@
+name: danger
+
+# docs/adr/0005-vrt-dedicated-project.md: VRT参照スナップショットの自動commitに [ci skip] を付けたため、
+# pull_request イベントではこのワークフローも一緒に止まってしまう。
+# GitHub のスキップ指示は push / pull_request にしか効かないので、
+# pull_request_target に切り替えてスキップ対象から外す。
+#
+# pull_request_target はベースブランチ（main）のスコープでキャッシュを読み書きするが、PRからの実行では
+# mainへの保存が通らない（`Unable to reserve cache`）。mainへのpushでも走らせて、Swiftツールチェーンと
+# ツールのキャッシュをmainに保存し、PRからはそれを読む。pushと手動実行ではDangerそのものは実行しない。
+on:
+  pull_request_target:
+    branches: ["**"]
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  danger:
+    # pull_request_target はベースリポジトリのSecretを持つため、fork PRのコードを
+    # そのまま実行させない（fork PRは従来の pull_request でもSecretが渡らずDangerは動かなかった）。
+    # Dependabot PR ではSecretが渡らず DANGER_GITHUB_API_TOKEN が空になるためスキップする。
+    if: >-
+      github.actor != 'dependabot[bot]'
+      && (github.event_name != 'pull_request_target'
+      || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    env:
+      SWIFT_VERSION: "6.2"
+      SWIFT_TOOLCHAIN_DIR: /opt/hostedtoolcache/swift-Ubuntu
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          # pull_request_target のデフォルトはベースブランチのチェックアウトになるため、
+          # SwiftLintの対象をPRの変更内容に合わせるには head の実コミットを明示的に取る。
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Cache Swift toolchain
+        id: cache-swift
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.SWIFT_TOOLCHAIN_DIR }}
+          key: swift-toolchain-${{ runner.os }}-${{ env.SWIFT_VERSION }}
+
+      - name: Setup Swift
+        if: steps.cache-swift.outputs.cache-hit != 'true'
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: ${{ env.SWIFT_VERSION }}
+
+      - name: Restore Swift PATH from cache
+        if: steps.cache-swift.outputs.cache-hit == 'true'
+        run: |
+          SWIFT_BIN=$(find ${{ env.SWIFT_TOOLCHAIN_DIR }} -name swift -type f -path "*/usr/bin/swift" | head -1)
+          echo "$(dirname "$SWIFT_BIN")" >> $GITHUB_PATH
+
+      - name: Show Swift version
+        run: swift --version
+
+      - name: Setup Node.js
+        if: github.event_name == 'pull_request_target'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install Danger
+        if: github.event_name == 'pull_request_target'
+        run: npm install -g danger
+
+      # Dangerfile.swift が ProjectTools から使うのは SwiftLint の Linux 版バイナリだけなので、
+      # ビルドせずバイナリ依存（artifacts）だけを取得してキャッシュする。
+      # .build 全体は SwiftFormat のリポジトリを含み600MBを超えるが、artifacts だけなら約120MB
+      - name: Cache ProjectTools artifacts
+        id: cache-project-tools
+        uses: actions/cache@v4
+        with:
+          path: ProjectTools/.build/artifacts
+          key: project-tools-artifacts-${{ runner.os }}-${{ hashFiles('ProjectTools/Package.resolved') }}
+
+      - name: Fetch SwiftLint binary
+        if: steps.cache-project-tools.outputs.cache-hit != 'true'
+        run: swift package resolve --package-path ProjectTools --scratch-path ProjectTools/.build
+
+      - name: Cache DangerTools build
+        uses: actions/cache@v4
+        with:
+          path: DangerTools/.build
+          key: danger-tools-${{ runner.os }}-${{ env.SWIFT_VERSION }}-${{ hashFiles('DangerTools/Package.resolved') }}
+          restore-keys: |
+            danger-tools-${{ runner.os }}-${{ env.SWIFT_VERSION }}-
+
+      - name: Build DangerTools
+        run: swift build --package-path DangerTools --scratch-path DangerTools/.build
+
+      - name: Run Danger
+        if: github.event_name == 'pull_request_target'
+        working-directory: DangerTools
+        run: swift run danger-swift ci --dangerfile Dangerfile.swift --cwd .. --id "danger"
+        env:
+          GITHUB_TOKEN: ${{ secrets.DANGER_GITHUB_API_TOKEN }}

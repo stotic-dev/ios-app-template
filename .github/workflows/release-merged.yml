@@ -1,0 +1,68 @@
+name: Release Merged
+
+# docs/adr/0007-release-pipeline.md: リリースPR（release/*ブランチ）がmainにマージされたことをトリガーに、
+# タグ作成 → GitHub Release publish だけを行う。
+# メタデータ同期（sync-metadata.yml）とApp Storeへのビルドアップロードはここからは起動しない。
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'release/')
+    runs-on: ubuntu-latest
+    env:
+      HEAD_REF: ${{ github.event.pull_request.head.ref }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Resolve version from branch name
+        run: |
+          # release/v1.1.0 -> VERSION=v1.1.0
+          VERSION="${HEAD_REF#release/}"
+          if ! [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::head.refからバージョンを解決できませんでした（HEAD_REF=$HEAD_REF）"
+            exit 1
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Configure git
+        run: |
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+
+      - name: Create and push tag
+        run: |
+          git tag -f "$VERSION"
+          git push origin -f "$VERSION"
+
+      - name: Publish GitHub Release
+        run: |
+          # 同じバージョンのReleaseが既にあれば削除して作り直す（タグと同様に上書き扱いにする）。
+          # --cleanup-tagは付けない（直前でpushしたタグまで消えてしまうため）
+          if gh release view "$VERSION" > /dev/null 2>&1; then
+            gh release delete "$VERSION" --yes
+          fi
+          gh release create "$VERSION" \
+            --title "$VERSION" \
+            --generate-notes \
+            --latest \
+            --target main
+
+      - name: Create summary
+        if: always()
+        run: |
+          {
+            echo "## Release Merged"
+            echo ""
+            echo "- **Version**: \`$VERSION\`"
+            echo "- **Result**: ${{ job.status }}"
+            echo "- **PR**: #${{ github.event.pull_request.number }}"
+          } >> "$GITHUB_STEP_SUMMARY"

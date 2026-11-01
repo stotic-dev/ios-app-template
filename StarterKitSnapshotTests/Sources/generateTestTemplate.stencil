@@ -1,0 +1,334 @@
+// swiftlint:disable all
+// swiftformat:disable all
+
+import XCTest
+import SwiftUI
+import Prefire
+{% for import in argument.imports %}
+import {{ import }}
+{% endfor %}
+{% if argument.mainTarget %}
+@testable import {{ argument.mainTarget }}
+{% endif %}
+{% for import in argument.testableImports %}
+@testable import {{ import }}
+{% endfor %}
+import SnapshotTesting
+#if canImport(AccessibilitySnapshot)
+    import AccessibilitySnapshot
+#endif
+
+@MainActor class {PREVIEW_FILE_NAME}Tests: XCTestCase, Sendable {
+    private var simulatorDevice: String?{% if argument.simulatorDevice %} = "{{ argument.simulatorDevice|default:nil }}"{% endif %}
+    private var requiredOSVersion: Int?{% if argument.simulatorOSVersion %} = {{ argument.simulatorOSVersion }}{% endif %}
+    private let snapshotDevices: [String]{% if argument.snapshotDevices %} = {{ argument.snapshotDevices|split:"|" }}{% else %} = []{% endif %}
+#if os(iOS)
+    private let deviceConfig: DeviceConfig = ViewImageConfig.iPhoneX.deviceConfig
+#elseif os(tvOS)
+    private let deviceConfig: DeviceConfig = ViewImageConfig.tv.deviceConfig
+#endif
+
+    /// Xcode Cloud では CI_PRIMARY_REPOSITORY_PATH 配下の ci_scripts/__Snapshots__ を参照する。
+    ///
+    /// ローカルは SNAPSHOT_REFERENCE_DIR で参照PNGの場所（StarterKitSnapshotTests/__Snapshots__/PreviewTests.generated）
+    /// を渡す（scripts/run-affected-snapshots.sh が渡す）。Prefire 6 ではこの生成ファイルがビルドプラグインの出力として
+    /// DerivedData に置かれるため、#filePath から辿るとリポジトリの参照PNGに届かず、DerivedData 側に参照を新しく記録して
+    /// 全件「No reference was found」で失敗してしまう。
+    /// __Snapshots__ を Sources/ の外に出しているのは、テストターゲットの同期グループに含めて .xctest バンドルへ
+    /// 61MBのPNGをコピーさせないためである（docs/adr/0005-vrt-dedicated-project.md)。
+    private var snapshotDirectoryOverride: String? {
+        if ProcessInfo.processInfo.environment["CI_XCODE_CLOUD"] == "TRUE",
+           let repositoryPath = ProcessInfo.processInfo.environment["CI_PRIMARY_REPOSITORY_PATH"] {
+            return "\(repositoryPath)/ci_scripts/__Snapshots__"
+        }
+        if let referenceDirectory = ProcessInfo.processInfo.environment["SNAPSHOT_REFERENCE_DIR"],
+           !referenceDirectory.isEmpty {
+            return referenceDirectory
+        }
+        return URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("__Snapshots__")
+            .appendingPathComponent("PreviewTests.generated")
+            .path
+    }
+
+    /// 参照PNGを再記録する専用ワークフロー（docs/adr/0005-vrt-dedicated-project.md）でのみ SNAPSHOT_TESTING_RECORD が
+    /// 明示的に設定される。この間は不一致 = 記録対象であり失敗ではないため XCTFail を発生させない。
+    /// ローカル実行および通常の VRT 検証ワークフローでは空文字に解決されるため従来通り失敗する
+    /// （xctestplan の environmentVariableEntries は未解決でもキー自体は空文字で必ず設定されるため、
+    /// isEmpty ではなく nil のみで判定すると常に true になってしまう点に注意）。
+    private var isRecordingSnapshots: Bool {
+        guard let value = ProcessInfo.processInfo.environment["SNAPSHOT_TESTING_RECORD"] else {
+            return false
+        }
+        return !value.isEmpty
+    }
+
+    {% if argument.file %}
+
+    private var file: StaticString { .init(stringLiteral: "{{ argument.file }}") }
+    {% endif %}
+
+    @MainActor override func setUp() async throws {
+        try await super.setUp()
+
+        checkEnvironments()
+        UIView.setAnimationsEnabled(false)
+    }
+
+    // MARK: - PreviewProvider
+
+    {% for type in types.types where type.implements.PrefireProvider or type.based.PrefireProvider or type|annotated:"PrefireProvider" %}
+    func test_{{ type.name|lowerFirstLetter|replace:"_Previews", "" }}() {
+        for preview in {{ type.name }}._allPreviews {
+            if let failure = assertSnapshots(for: PrefireSnapshot(preview, device: preview.device?.snapshotDevice() ?? deviceConfig)), !isRecordingSnapshots {
+                XCTFail(failure)
+            }
+        }
+    }
+    {%- if not forloop.last %}
+
+    {% endif %}
+    {% endfor %}
+    {% if argument.previewsMacrosDict %}
+    // MARK: - Macros
+
+    {% for macroModel in argument.previewsMacrosDict %}
+    func test_{{ macroModel.componentTestName }}_Preview() {
+        struct PreviewWrapper{{ macroModel.componentTestName }}: SwiftUI.View {
+            {{ macroModel.properties }}
+            var body: some View {
+                {{ macroModel.body|indent:12 }}
+            }
+        }
+        let prefireSnapshot = PrefireSnapshot(
+            {
+                PreviewWrapper{{ macroModel.componentTestName }}()
+            },
+            name: "{{ macroModel.displayName }}",
+            isScreen: {% if macroModel.isScreen == 1 %}true{% else %}false{% endif %},
+            device: deviceConfig
+        )
+
+        if let failure = assertSnapshots(for: prefireSnapshot), !isRecordingSnapshots {
+            XCTFail(failure)
+        }
+    }
+    {%- if not forloop.last %}
+
+    {% endif %}
+    {% endfor %}
+    {% endif %}
+    // MARK: Private
+
+    private func assertSnapshots<Content: SwiftUI.View>(for prefireSnapshot: PrefireSnapshot<Content>) -> String? {
+        guard !snapshotDevices.isEmpty else {
+            return assertSnapshot(for: prefireSnapshot)
+        }
+
+        for deviceName in snapshotDevices {
+            guard let device: DeviceConfig = PreviewDevice(rawValue: deviceName).snapshotDevice() else {
+                fatalError("Unknown device name from configuration file: \(deviceName)")
+            }
+
+            // ライト・ダークの両方を撮る。前景に面の色を使ってしまうような
+            // 片方のモードでだけコントラストが破綻する退行は、ライトだけを撮っていると
+            // リリースまで検知できないため（docs/adr/0005-vrt-dedicated-project.md 参照）。
+            // ライトは従来の参照PNG名を維持し、ダークだけ "-dark" を付ける。
+            for userInterfaceStyle in [UIUserInterfaceStyle.light, .dark] {
+                var snapshot = prefireSnapshot
+
+                snapshot.name = "\(prefireSnapshot.name)-\(deviceName)"
+                    + (userInterfaceStyle == .dark ? "-dark" : "")
+                snapshot.device = device
+
+                // Ignore specific device safe area
+                snapshot.device.safeArea = .zero
+
+                // Ignore specific device display scale.
+                // displayGamut を SRGB に固定し、スナップショットのレンダリング色空間を
+                // ローカル（Display P3 の Mac）と Xcode Cloud（sRGB）で統一する。
+                // これが無いと参照PNG（P3）とCIレンダリング（sRGB）の生ピクセル値が
+                // 彩度の高い色で大きくずれ、知覚比較が誤検出する。
+                snapshot.traits = UITraitCollection(traitsFrom: [
+                    UITraitCollection(displayScale: 2.0),
+                    UITraitCollection(displayGamut: .SRGB),
+                    UITraitCollection(userInterfaceStyle: userInterfaceStyle),
+                ])
+
+                if let failure = assertSnapshot(for: snapshot), !isRecordingSnapshots {
+                    XCTFail(failure)
+                }
+            }
+        }
+
+        return nil
+    }
+
+    private func assertSnapshot<Content: SwiftUI.View>(for prefireSnapshot: PrefireSnapshot<Content>) -> String? {
+        let (previewView, preferences) = prefireSnapshot.loadViewWithPreferences()
+        if preferences.delay > 0 {
+            return assertSnapshotAfterDelay(of: previewView, for: prefireSnapshot, preferences: preferences)
+        }
+
+        // perceptualPrecision は一律 0.98（deltaE <= 2、人間の知覚限界未満）でキャップする。
+        // ローカルと Xcode Cloud では macOS ビルド差により CoreGraphics の
+        // アンチエイリアス縁のラスタライズ丸めが ±1/255 ずれることがあり
+        // （実測: 数ピクセルが 1 チャンネルだけ 1 ずれる、deltaE < 0.5）、
+        // 完全一致（1.0）ではこの環境差で誤検出する。
+        // precision（deltaE 条件を満たすべきピクセルの割合）は緩めないため、
+        // 知覚可能な見た目の変化は引き続き全ピクセルで検出される。
+        let failure = verifySnapshot(
+            of: previewView,
+            as: .image(
+                {% if argument.drawHierarchyInKeyWindowDefaultEnabled %}
+                drawHierarchyInKeyWindow: {{ argument.drawHierarchyInKeyWindowDefaultEnabled }},
+                {% endif %}
+                precision: preferences.precision,
+                perceptualPrecision: min(preferences.perceptualPrecision, 0.98),
+                layout: prefireSnapshot.isScreen ? .device(config: prefireSnapshot.device.imageConfig) : .sizeThatFits,
+                traits: prefireSnapshot.traits
+            ),
+            snapshotDirectory: snapshotDirectoryOverride{% if argument.file %},
+            file: file{% endif %},
+            testName: prefireSnapshot.name
+        )
+
+        #if canImport(AccessibilitySnapshot)
+            let vc = UIHostingController(rootView: previewView)
+            vc.view.frame = UIScreen.main.bounds
+
+            SnapshotTesting.assertSnapshot(
+                matching: vc,
+                as: .accessibilityImage(showActivationPoints: .always),
+                snapshotDirectory: snapshotDirectoryOverride{% if argument.file %},
+                file: file{% endif %},
+                testName: prefireSnapshot.name + ".accessibility"
+            )
+        #endif
+        return failure
+    }
+
+    /// `.snapshot(delay:)`を付けたプレビューを、表示したまま指定の秒数だけ待ってから撮る
+    ///
+    /// ライブラリの`.image`は、撮るたびにViewを作り直してその場で描く。表示した後にレイアウトの結果を受けて描き直すView
+    /// （切り抜くUIの位置を受け取ってから描くチュートリアルのスポットライトなど）は、描き直す前の状態が撮られてしまう。
+    /// そこで同じ画面をキーウィンドウに表示したまま待ち、描き直した後の画面を描いて、画像としてライブラリに比べさせる。
+    /// 置き方はライブラリの`.image(drawHierarchyInKeyWindow: true)`にそろえる（セーフエリアの影響を受けないよう画面の外に置く）。
+    private func assertSnapshotAfterDelay<Content: SwiftUI.View>(
+        of previewView: PrefireSnapshotView,
+        for prefireSnapshot: PrefireSnapshot<Content>,
+        preferences: PreferenceKeys
+    ) -> String? {
+        let config = prefireSnapshot.device.imageConfig
+        guard prefireSnapshot.isScreen, let size = config.size else {
+            return "`.snapshot(delay:)`は、画面全体を撮るプレビューにだけ付けられます"
+        }
+        guard let window = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene })
+            .flatMap(\.windows)
+            .first(where: \.isKeyWindow) else {
+            return "`.snapshot(delay:)`は、ホストアプリのキーウィンドウで撮るため、キーウィンドウが必要です"
+        }
+        let traits = UITraitCollection(traitsFrom: [config.traits, prefireSnapshot.traits])
+
+        let hostingController = UIHostingController(rootView: previewView)
+        let container = UIViewController()
+        // 中身を置く前に大きさを決める。後から変えると、中身が元の大きさとの差の分だけ縮む
+        container.view.frame = CGRect(origin: .zero, size: size)
+        container.addChild(hostingController)
+        container.view.addSubview(hostingController.view)
+        hostingController.view.frame = container.view.bounds
+        hostingController.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        container.setOverrideTraitCollection(traits, forChild: hostingController)
+        hostingController.didMove(toParent: container)
+
+        window.frame.size = size
+        window.rootViewController = container
+        container.view.frame = CGRect(origin: CGPoint(x: 10_000, y: 10_000), size: size)
+        container.view.layoutIfNeeded()
+        defer { window.rootViewController = nil }
+
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: preferences.delay))
+
+        let bounds = container.view.bounds
+        let image = UIGraphicsImageRenderer(bounds: bounds, format: .init(for: traits)).image { _ in
+            container.view.drawHierarchy(in: bounds, afterScreenUpdates: true)
+        }
+        return verifySnapshot(
+            of: image,
+            as: .image(
+                precision: preferences.precision,
+                perceptualPrecision: min(preferences.perceptualPrecision, 0.98),
+                scale: traits.displayScale
+            ),
+            snapshotDirectory: snapshotDirectoryOverride{% if argument.file %},
+            file: file{% endif %},
+            testName: prefireSnapshot.name
+        )
+    }
+
+    /// Check environments to avoid problems with snapshots on different devices or OS.
+    private func checkEnvironments() {
+        if let simulatorDevice, let deviceModel = ProcessInfo().environment["SIMULATOR_MODEL_IDENTIFIER"] {
+            guard deviceModel.contains(simulatorDevice) else {
+                fatalError("Switch to using \(simulatorDevice) for these tests. (You are using \(deviceModel))")
+            }
+        }
+
+        if let requiredOSVersion {
+            let osVersion = ProcessInfo().operatingSystemVersion
+            guard osVersion.majorVersion == requiredOSVersion else {
+                fatalError("Switch to iOS \(requiredOSVersion) for these tests. (You are using \(osVersion))")
+            }
+        }
+    }
+}
+
+// MARK: - SnapshotTesting + Extensions
+
+private extension DeviceConfig {
+    var imageConfig: ViewImageConfig { ViewImageConfig(safeArea: safeArea, size: size, traits: traits) }
+}
+
+private extension ViewImageConfig {
+    var deviceConfig: DeviceConfig { DeviceConfig(safeArea: safeArea, size: size, traits: traits) }
+}
+
+private extension PreviewDevice {
+    func snapshotDevice() -> ViewImageConfig? {
+        switch rawValue {
+        #if os(iOS)
+        case "iPhone 16 Pro Max", "iPhone 15 Pro Max", "iPhone 14 Pro Max", "iPhone 13 Pro Max", "iPhone 12 Pro Max":
+            return .iPhone13ProMax
+        case "iPhone 16 Pro", "iPhone 15 Pro", "iPhone 14 Pro", "iPhone 13 Pro", "iPhone 12 Pro":
+            return .iPhone13Pro
+        case "iPhone 16", "iPhone 15", "iPhone 14", "iPhone 13", "iPhone 12", "iPhone 11", "iPhone 10", "iPhone X":
+            return .iPhoneX
+        case "iPhone 6", "iPhone 6s", "iPhone 7", "iPhone 8", "iPhone SE (2nd generation)", "iPhone SE (3rd generation)":
+            return .iPhone8
+        case "iPhone 6 Plus", "iPhone 6s Plus", "iPhone 8 Plus":
+            return .iPhone8Plus
+        case "iPhone SE (1st generation)":
+            return .iPhoneSe
+        case "iPad":
+            return .iPad10_2
+        case "iPad Mini":
+            return .iPadMini
+        case "iPad Pro 11":
+            return .iPadPro11
+        case "iPad Pro 12.9":
+            return .iPadPro12_9
+        #elseif os(tvOS)
+        case "Apple TV":
+            return .tv
+        #endif
+        default: return nil
+        }
+    }
+
+    func snapshotDevice() -> DeviceConfig? {
+        (self.snapshotDevice())?.deviceConfig
+    }
+}

@@ -1,0 +1,19 @@
+version: 2
+updates:
+  # LocalPackage / InfraPackage（SPM）の直接依存のみを監視する。
+  # ProjectTools / DangerTools / StarterKit.xcodeproj は対象外。
+  - package-ecosystem: "swift"
+    directories:
+      - "/LocalPackage"
+      - "/InfraPackage"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Tokyo"
+    # 推移的依存（外部SDKが内部で引くパッケージ）のPRは作らない
+    allow:
+      - dependency-type: "direct"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore"

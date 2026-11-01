@@ -1,0 +1,123 @@
+// swiftlint:disable all
+// Generated using SwiftGen — https://github.com/SwiftGen/SwiftGen
+
+#if canImport(SwiftUI)
+import SwiftUI
+#endif
+#if canImport(UIKit)
+import UIKit
+#endif
+
+{% if catalogs %}
+
+// MARK: - Colors
+
+{% macro colorCases assets %}
+  {%- for asset in assets %}
+    {%- if asset.type == "color" %}
+  static let {{ asset.name|swiftIdentifier:"pretty"|lowerFirstWord|escapeReservedKeywords }} = StarterColor(name: "{{ asset.value }}")
+    {%- elif asset.items and asset.isNamespaced == "true" %}
+  public enum {{ asset.name|swiftIdentifier:"pretty"|escapeReservedKeywords }} {
+    {% filter indent:2," ",true %}{% call colorCases asset.items %}{% endfilter %}
+  }
+    {%- elif asset.items %}
+    {%- call colorCases asset.items %}
+    {%- endif %}
+  {%- endfor %}
+{% endmacro %}
+
+public extension StarterColor {
+  {%- for catalog in catalogs %}
+  {%- call colorCases catalog.assets %}
+  {%- endfor %}
+}
+
+// MARK: - Implementation Details (Colors)
+
+public struct StarterColor: Hashable, Sendable {
+  public fileprivate(set) var name: String
+}
+
+#if canImport(SwiftUI)
+@available(iOS 11.0, tvOS 11.0, watchOS 4.0, macOS 10.13, *)
+public extension SwiftUI.Color {
+  init(_ color: StarterColor) {
+    self.init(color.name, bundle: .module)
+  }
+}
+#endif
+
+#if canImport(UIKit)
+@available(iOS 11.0, tvOS 11.0, watchOS 4.0, *)
+public extension UIColor {
+  convenience init(_ color: StarterColor) {
+    self.init(named: color.name, in: .module, compatibleWith: nil)!
+  }
+}
+#endif
+
+// MARK: - SwiftUI ShapeStyle shortcuts (Colors)
+
+{% macro shapeStyleColorCases assets %}
+  {%- for asset in assets %}
+    {%- if asset.type == "color" %}
+  static var {{ asset.name|swiftIdentifier:"pretty"|lowerFirstWord|escapeReservedKeywords }} : Color { .init("{{ asset.value }}", bundle: .module) }
+    {%- elif asset.items %}
+      {%- call shapeStyleColorCases asset.items %}
+    {%- endif %}
+  {%- endfor %}
+{% endmacro %}
+
+public extension ShapeStyle where Self == Color {
+  {%- for catalog in catalogs %}
+  {%- call shapeStyleColorCases catalog.assets %}
+  {%- endfor %}
+}
+
+// MARK: - Images
+
+{% macro imageCases assets %}
+  {%- for asset in assets %}
+    {%- if asset.type == "image" %}
+  static let {{ asset.name|swiftIdentifier:"valid"|lowerFirstWord|escapeReservedKeywords }} = StarterImage(name: "{{ asset.value }}")
+    {%- elif asset.items and asset.isNamespaced == "true" %}
+  public enum {{ asset.name|swiftIdentifier:"pretty"|escapeReservedKeywords }} {
+    {% filter indent:2," ",true %}{% call imageCases asset.items %}{% endfilter %}
+  }
+    {%- elif asset.items %}
+    {%- call imageCases asset.items %}
+    {%- endif %}
+  {%- endfor %}
+{% endmacro %}
+
+public extension StarterImage {
+  {%- for catalog in catalogs %}
+  {%- call imageCases catalog.assets %}
+  {%- endfor %}
+}
+
+// MARK: - Implementation Details (Images)
+
+public struct StarterImage: Hashable, Sendable {
+  public fileprivate(set) var name: String
+}
+
+#if canImport(SwiftUI)
+@available(iOS 11.0, tvOS 11.0, watchOS 4.0, macOS 10.13, *)
+public extension SwiftUI.Image {
+  init(_ image: StarterImage) {
+    self.init(image.name, bundle: .module)
+  }
+}
+#endif
+
+#if canImport(UIKit)
+@available(iOS 11.0, tvOS 11.0, watchOS 4.0, *)
+public extension UIImage {
+  convenience init(_ image: StarterImage) {
+    self.init(named: image.name, in: .module, compatibleWith: nil)!
+  }
+}
+#endif
+
+{% endif %}

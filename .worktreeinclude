@@ -1,0 +1,14 @@
+# wt step copy-ignored でコピーする対象を限定するファイル
+# gitignore対象 かつ ここに記載されたパターンに一致するファイルのみコピーされる
+# （Build/ などの巨大なビルド成果物を誤ってコピーしないため）
+
+# secret（.gitignoreの「# secret」セクションと対応）
+private_keys/
+.env
+fastlane/.env
+scripts/appstoreconnect.env
+StarterKit/Resources/Secret.xcconfig
+StarterKit/Resources/Secret_dev.xcconfig
+
+# Claude Code設定（sandbox無効化・Bash許可ルールをworktreeにも引き継ぐ）
+.claude/settings.local.json

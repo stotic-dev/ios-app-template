@@ -1,0 +1,25 @@
+# Prefire（VRT）の設定。Prefireの読み込みはコメント行も項目として扱うので、コメントはこの先頭にだけ書く。
+# testable_imports はVRTで描画するモジュール。プレビューを置くのはStarterUIとXxxFeatureUIだけ（docs/adr/0003-separate-ui-modules-from-domain.md）。
+# 足したら StarterKitVRT.xcodeproj のテストターゲットのリンクと scripts/affected-modules.py の VRT_MODULES もそろえる
+test_configuration:
+  - target: StarterKitVRTHost
+  - test_target_path: ${PROJECT_DIR}/StarterKitSnapshotTests/Sources
+  - simulator_device: "iPhone17,3"
+  - required_os: 27
+  - preview_default_enabled: true
+  - template_file_path: generateTestTemplate.stencil
+  - use_grouped_snapshots: true
+  - sources:
+    - ${PROJECT_DIR}/LocalPackage/Sources
+  - snapshot_devices:
+    - iPhone 16
+    - iPhone SE (2nd generation)
+  - imports:
+    - UIKit
+    - SwiftUI
+    - StarterModel
+    - StarterResources
+  - testable_imports:
+    - StarterUI
+    - HomeFeatureUI
+  - draw_hierarchy_in_key_window_default_enabled: true

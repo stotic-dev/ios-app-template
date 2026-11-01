@@ -1,0 +1,12 @@
+{
+  "sourceLanguage" : "ja",
+  "strings" : {
+    "プレビュー用のタイトル" : {
+      "shouldTranslate" : false
+    },
+    "プレビュー用のメッセージ" : {
+      "shouldTranslate" : false
+    }
+  },
+  "version" : "1.0"
+}
