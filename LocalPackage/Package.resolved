@@ -1,13 +1,13 @@
 {
-  "originHash" : "b8b0e1e4b9fc085950db2794d6d648bf8e2c44ca322de6b497b31d77458b2721",
+  "originHash" : "3cd5fe134ad889435a1bd57a2184ec28216f5ca01ebcad066c14241a64449ccd",
   "pins" : [
     {
       "identity" : "prefire",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/BarredEwe/Prefire.git",
       "state" : {
-        "revision" : "bb912cffdabce65ca87367f79a6ca9df63b6f605",
-        "version" : "6.2.0"
+        "revision" : "34248f6f227cfe9917f8d9f5dee194903f488776",
+        "version" : "6.5.0"
       }
     },
     {
@@ -17,15 +17,6 @@
       "state" : {
         "revision" : "4fb9e7cbb4b8f5a7354005db39447f570d6b3e19",
         "version" : "1.7.3"
-      }
-    },
-    {
-      "identity" : "swift-issue-reporting",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/pointfreeco/swift-issue-reporting",
-      "state" : {
-        "revision" : "b23bb4493c439d3e05152bc167014235ba3d47fc",
-        "version" : "2.1.2"
       }
     },
     {
@@ -53,6 +44,15 @@
       "state" : {
         "revision" : "879b85a470cacd70c19e22eb7e11a3aed66f4068",
         "version" : "6.6.2"
+      }
+    },
+    {
+      "identity" : "xctest-dynamic-overlay",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/pointfreeco/xctest-dynamic-overlay",
+      "state" : {
+        "revision" : "d9308ad679143c26a30dec52daefe82f54af2b82",
+        "version" : "1.13.1"
       }
     }
   ],
